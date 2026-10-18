@@ -71,7 +71,7 @@ describe("PayerWallet", () => {
 
   it("refuses to sign before the first sync", async () => {
     const { wallet } = setup();
-    await expect(wallet.pay(makeRequest())).rejects.toMatchObject({ code: "NOT_SYNCED" });
+    await expect(wallet.pay(makeRequest())).rejects.toMatchObject({ code: "NOT_SYNCED", message: expect.stringMatching(/^Connect once to sync/) });
   });
 
   it("increments the cached sequence and debits amount + fee after each signing", async () => {

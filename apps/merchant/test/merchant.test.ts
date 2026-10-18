@@ -33,10 +33,12 @@ describe("createMerchant", () => {
     expect(options.confirmer).toBeInstanceOf(core.HorizonGateway);
   });
 
-  it("uses the network clock for settlement and syncs it at startup", async () => {
+  it("uses the network clock for settlement and syncs only when asked", async () => {
     const { merchant, options } = await load("");
     expect(options.clock).toBe(merchant.clock.now);
     expect(merchant.clock.now() - Math.floor(Date.now() / 1000)).toBeGreaterThanOrEqual(3599);
+    expect(calls).toEqual([]);
+    await merchant.syncClock();
     expect(calls).toEqual(["sync"]);
   });
 

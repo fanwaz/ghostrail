@@ -16,6 +16,9 @@ importers:
       '@op-engineering/op-sqlite':
         specifier: ^15.1.6
         version: 15.1.6(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
+      '@stellar/stellar-sdk':
+        specifier: ^17.2.1
+        version: 17.2.1
       expo:
         specifier: ~58.0.14
         version: 58.0.14(@babel/core@7.29.7)(@expo/dom-webview@58.0.2)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@7.0.2)
@@ -44,9 +47,6 @@ importers:
         specifier: 15.16.0
         version: 15.16.0(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
     devDependencies:
-      '@stellar/stellar-sdk':
-        specifier: ^17.2.1
-        version: 17.2.1
       '@types/react':
         specifier: ~19.3.0
         version: 19.3.0

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NetworkClock, fetchLatestLedgerCloseTime } from "../src/index.js";
+import { CLOCK_NOT_SYNCED_MESSAGE, NetworkClock, fetchLatestLedgerCloseTime } from "../src/index.js";
 
 describe("NetworkClock", () => {
   it("corrects a device clock that is hours behind the network", async () => {
@@ -45,5 +45,33 @@ describe("fetchLatestLedgerCloseTime", () => {
 
   it("throws on an empty page", async () => {
     await expect(fetchLatestLedgerCloseTime(server([]).server)).rejects.toThrow(/no ledgers/);
+  });
+});
+
+describe("NetworkClock sync state", () => {
+  it("is unsynced until the first successful sync, and assertSynced says so", async () => {
+    const clock = new NetworkClock(0, () => 100);
+    expect(clock.isSynced).toBe(false);
+    expect(clock.syncedAt).toBeNull();
+    expect(() => clock.assertSynced()).toThrow(CLOCK_NOT_SYNCED_MESSAGE);
+    try {
+      clock.assertSynced();
+    } catch (err) {
+      expect(err).toMatchObject({ code: "CLOCK_NOT_SYNCED" });
+    }
+
+    await expect(clock.sync(async () => Promise.reject(new Error("offline")))).rejects.toThrow();
+    expect(clock.isSynced).toBe(false);
+
+    await clock.sync(async () => 250);
+    expect(clock.isSynced).toBe(true);
+    expect(clock.syncedAt).toBe(250);
+    expect(() => clock.assertSynced()).not.toThrow();
+  });
+
+  it("restores the synced state from persisted values", () => {
+    const clock = new NetworkClock(30, () => 100, 90);
+    expect(clock.isSynced).toBe(true);
+    expect(clock.syncedAt).toBe(90);
   });
 });

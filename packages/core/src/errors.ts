@@ -12,7 +12,8 @@ export type GhostRailErrorCode =
   | "STALE_STATE"
   | "NOT_FOUND"
   | "NOT_SYNCED"
-  | "INSUFFICIENT_BALANCE";
+  | "INSUFFICIENT_BALANCE"
+  | "CLOCK_NOT_SYNCED";
 
 export class GhostRailError extends Error {
   constructor(

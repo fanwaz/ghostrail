@@ -1,3 +1,8 @@
+import { GhostRailError } from "./errors.js";
+
+/** Shown wherever signing or request creation is blocked on a first sync. */
+export const CLOCK_NOT_SYNCED_MESSAGE = "Connect once to sync the clock with the Stellar network";
+
 /** Injected time source, in unix seconds, so expiry logic is deterministic in tests. */
 export type Clock = () => number;
 
@@ -16,12 +21,19 @@ export type NetworkTimeSource = () => Promise<number>;
  */
 export class NetworkClock {
   private offset: number;
+  private lastSync: number | null;
 
+  /**
+   * @param offsetSeconds persisted offset from an earlier sync
+   * @param syncedAt network time of that sync; null means this device has never synced
+   */
   constructor(
     offsetSeconds = 0,
     private readonly base: Clock = systemClock,
+    syncedAt: number | null = null,
   ) {
     this.offset = offsetSeconds;
+    this.lastSync = syncedAt;
   }
 
   /** The corrected clock. Pass this wherever a `Clock` is expected. */
@@ -31,6 +43,20 @@ export class NetworkClock {
     return this.offset;
   }
 
+  /** Network time (unix seconds) of the last successful sync, or null if never synced. */
+  get syncedAt(): number | null {
+    return this.lastSync;
+  }
+
+  get isSynced(): boolean {
+    return this.lastSync !== null;
+  }
+
+  /** Throws CLOCK_NOT_SYNCED until the first successful sync. Call before signing or creating requests. */
+  assertSynced(): void {
+    if (!this.isSynced) throw new GhostRailError("CLOCK_NOT_SYNCED", CLOCK_NOT_SYNCED_MESSAGE);
+  }
+
   /** Re-measures the offset. Rejects (keeping the old offset) if the source fails. */
   async sync(source: NetworkTimeSource): Promise<number> {
     const networkTime = await source();
@@ -38,6 +64,7 @@ export class NetworkClock {
       throw new Error(`Invalid network time ${networkTime}`);
     }
     this.offset = networkTime - this.base();
+    this.lastSync = networkTime;
     return this.offset;
   }
 }

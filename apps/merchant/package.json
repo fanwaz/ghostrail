@@ -16,6 +16,7 @@
   "dependencies": {
     "@ghostrail/core": "workspace:*",
     "@op-engineering/op-sqlite": "^15.1.6",
+    "@stellar/stellar-sdk": "^17.2.1",
     "expo": "~58.0.14",
     "expo-camera": "~58.0.10",
     "expo-crypto": "~58.0.7",
@@ -27,7 +28,6 @@
     "react-native-svg": "15.16.0"
   },
   "devDependencies": {
-    "@stellar/stellar-sdk": "^17.2.1",
     "@types/react": "~19.3.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"

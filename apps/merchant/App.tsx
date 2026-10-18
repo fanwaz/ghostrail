@@ -3,13 +3,15 @@ import { Button, FlatList, SafeAreaView, StyleSheet, Text, TextInput, View } fro
 import { StatusBar } from "expo-status-bar";
 import QRCode from "react-native-qrcode-svg";
 import {
+  CLOCK_NOT_SYNCED_MESSAGE,
   encodeRequest,
   verifySignedPayment,
   type PaymentRecord,
   type PaymentRequest,
 } from "@ghostrail/core";
-import { MERCHANT_ADDRESS, REQUEST_TTL_SECONDS } from "./src/config";
 import { createMerchant, type Merchant } from "./src/merchant";
+import { PayerScreen } from "./src/PayerScreen";
+import { createPaymentRequest } from "./src/requests";
 import { classifyScan } from "./src/scan";
 import { Scanner } from "./src/Scanner";
 
@@ -26,6 +28,8 @@ export default function App() {
   const [request, setRequest] = useState<PaymentRequest | null>(null);
   const [signedXdr, setSignedXdr] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [mode, setMode] = useState<"merchant" | "payer">("merchant");
+  const [clockSynced, setClockSynced] = useState(false);
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async (m: Merchant) => setPayments(await m.queue.list()), []);
@@ -33,27 +37,28 @@ export default function App() {
   useEffect(() => {
     let current: Merchant | null = null;
     createMerchant(() => current && void refresh(current))
-      .then((m) => {
+      .then(async (m) => {
         current = m;
         setMerchant(m);
-        return refresh(m);
+        setClockSynced(m.clock.isSynced);
+        await refresh(m);
+        await m.syncClock(); // best effort; a persisted earlier sync covers offline launches
+        setClockSynced(m.clock.isSynced);
       })
       .catch((err: unknown) => setMessage(`Failed to open queue: ${String(err)}`));
   }, [refresh]);
 
+  const syncNow = async () => {
+    if (!merchant) return;
+    const ok = await merchant.syncClock();
+    setClockSynced(merchant.clock.isSynced);
+    setMessage(ok ? "Clock synced with the Stellar network" : "Still offline — connect to sync");
+  };
+
   const createRequest = () => {
     if (!merchant) return;
     try {
-      const next: PaymentRequest = {
-        v: 1,
-        id: `r-${Date.now().toString(36)}`,
-        destination: MERCHANT_ADDRESS,
-        amount,
-        asset: "native",
-        expiresAt: merchant.clock.now() + REQUEST_TTL_SECONDS,
-      };
-      encodeRequest(next); // validates
-      setRequest(next);
+      setRequest(createPaymentRequest(merchant.clock, amount));
       setMessage("");
     } catch (err) {
       setMessage(String(err));
@@ -82,6 +87,7 @@ export default function App() {
   const settle = async () => {
     if (!merchant) return;
     const report = await merchant.settle();
+    setClockSynced(merchant.clock.isSynced);
     setMessage(
       `settled ${report.settled.length}, failed ${report.failed.length}, expired ${report.expired.length}, ` +
         `pending ${report.pending.length}${report.errors.length ? `, errors ${report.errors.length}` : ""}`,
@@ -91,11 +97,25 @@ export default function App() {
   return (
     <SafeAreaView style={styles.root}>
       <StatusBar style="auto" />
-      <Text style={styles.title}>GhostRail Merchant (testnet)</Text>
+      <Text style={styles.title}>GhostRail (testnet)</Text>
+      <View style={styles.row}>
+        <Button title="Merchant" onPress={() => setMode("merchant")} disabled={mode === "merchant"} />
+        <Button title="Payer" onPress={() => setMode("payer")} disabled={mode === "payer"} />
+      </View>
 
+      {mode === "payer" ? (
+        <PayerScreen />
+      ) : (
+      <>
+      {!clockSynced && (
+        <View style={styles.row}>
+          <Text style={styles.warn}>{CLOCK_NOT_SYNCED_MESSAGE}.</Text>
+          <Button title="Sync now" onPress={syncNow} disabled={!merchant} />
+        </View>
+      )}
       <View style={styles.row}>
         <TextInput style={styles.input} placeholder="Amount (XLM)" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
-        <Button title="Request" onPress={createRequest} disabled={!merchant} />
+        <Button title="Request" onPress={createRequest} disabled={!merchant || !clockSynced} />
       </View>
 
       {request && !scanning && (
@@ -122,6 +142,8 @@ export default function App() {
           </View>
         )}
       />
+      </>
+      )}
     </SafeAreaView>
   );
 }
@@ -133,6 +155,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, borderWidth: 1, borderColor: "#999", borderRadius: 6, padding: 8 },
   mono: { fontFamily: "monospace", fontSize: 12 },
   message: { color: "#555" },
+  warn: { flex: 1, color: "#b45309" },
   request: { gap: 8, alignItems: "center" },
   payment: { paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth },
 });

@@ -16,6 +16,8 @@ export interface Merchant {
   settler: Settler;
   /** Network-corrected clock; use `clock.now` for request expiry and verification. */
   clock: NetworkClock;
+  /** Syncs the clock with Horizon and persists it. Resolves false when offline. */
+  syncClock(): Promise<boolean>;
   /** Re-syncs the clock (best effort), then runs a settlement pass. */
   settle(): Promise<SettlementReport>;
 }
@@ -28,7 +30,6 @@ export interface Merchant {
  */
 export async function createMerchant(onTransition: TransitionListener): Promise<Merchant> {
   const clock = await loadClock();
-  void syncClock(clock); // best effort; the persisted offset covers offline launches
   const queue = new PaymentQueue(await openQueueStore(), { onTransition, clock: clock.now });
   const horizon = new HorizonGateway();
   const submitter = RELAYER_URL ? new RelayerSubmitter(RELAYER_URL) : horizon;
@@ -37,6 +38,7 @@ export async function createMerchant(onTransition: TransitionListener): Promise<
     queue,
     settler,
     clock,
+    syncClock: () => syncClock(clock),
     async settle() {
       await syncClock(clock);
       return settler.runOnce();

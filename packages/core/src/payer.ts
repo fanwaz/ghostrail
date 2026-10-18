@@ -166,7 +166,7 @@ export class PayerWallet {
   pay(request: PaymentRequest): Promise<SignedPayment> {
     return this.serialized(async () => {
       const snapshot = await this.store.load();
-      if (!snapshot) throw new GhostRailError("NOT_SYNCED", "Wallet has never synced with the network");
+      if (!snapshot) throw new GhostRailError("NOT_SYNCED", "Connect once to sync this wallet with the Stellar network");
 
       const pendingDebit: Omit<PendingDebit, "sequence"> = {
         asset: request.asset,

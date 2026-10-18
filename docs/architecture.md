@@ -47,7 +47,7 @@ After a submit, the confirmation result decides the outcome:
 
 ## Relayer and fee-bumps
 
-`POST /submit` wraps the customer's tx in a fee-bump paid by the relayer's testnet sponsor (`RELAYER_SPONSOR_SECRET`, or a Friendbot-funded key at startup). The **inner** hash stays the idempotency key:
+`POST /submit` wraps the customer's tx in a fee-bump paid by the relayer's testnet sponsor. In production that is `RELAYER_SPONSOR_SECRET`, which is required. In dev it can instead be a temporary Friendbot-funded key, and a warning is logged. The **inner** hash stays the idempotency key:
 
 - Horizon finds a fee-bump by its inner hash, and `HorizonGateway.confirm` accepts that match.
 - The wrapper is deterministic, so a retry submits an identical envelope.
@@ -60,7 +60,9 @@ After a submit, the confirmation result decides the outcome:
 Expiry and time bounds use `NetworkClock`. Its offset comes from the latest ledger close time, because that is what validators compare `maxTime` against.
 
 - **Payer:** measures the offset on `sync()` and stores it in the snapshot.
-- **Merchant:** measures it at launch and before each settle, and persists it in SecureStore.
+- **Merchant:** measures it at launch and before each settle, and persists the offset and `syncedAt` in SecureStore.
+
+Until the first successful sync, `NetworkClock.assertSynced()` throws `CLOCK_NOT_SYNCED` ("Connect once to sync…"). Merchant request creation calls it. `PayerWallet.pay` refuses with `NOT_SYNCED` before the wallet's first sync, which always includes the clock.
 - **Relayer:** measures it at startup and every 5 minutes.
 
 ## Why the relayer can't settle anything
@@ -70,7 +72,7 @@ The merchant app uses the relayer only as a `Submitter`. Its `Confirmer` is alwa
 ## Known limitations (good first contributions)
 
 - **Sequence conflicts across devices:** `PayerWallet` serializes signing on one device, but the same account on two devices can still sign the same sequence. See `TODO(sequence-gaps)`.
-- **Clock before first sync:** a device that has never been online has no offset, so it uses its raw clock. (The dev machine was 4 h behind testnet, which is how this showed up.)
+- **Clock drift after sync:** the offset is measured once per sync. A device clock that is changed or drifts while offline goes uncorrected until the next sync. (The dev machine was 4 h behind testnet, which is how the original problem showed up.)
 - **Stale cached balance:** `PayerWallet` subtracts its own pending payments, but it can't see other spending from the same account since `syncedAt`.
 - **Single signer:** only the source account's master key is verified. See `TODO(multisig)`.
 - **No funds check on the merchant side:** the merchant can't know the payer's balance offline. See `TODO(risk)`.

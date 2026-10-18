@@ -57,8 +57,10 @@ pnpm typecheck
 Relayer:
 
 ```sh
-pnpm --filter @ghostrail/relayer dev    # http://localhost:8787 (set RELAYER_SPONSOR_SECRET to reuse a sponsor)
+pnpm --filter @ghostrail/relayer dev    # http://localhost:8787
 ```
+
+The relayer pays fee-bumps from a testnet sponsor account. With `NODE_ENV=production` it refuses to start unless `RELAYER_SPONSOR_SECRET` is set. In dev it creates a temporary Friendbot-funded sponsor and logs a warning; a new one replaces it on every restart.
 
 Merchant app (needs a dev build, because op-sqlite and SQLCipher are native):
 
@@ -66,6 +68,13 @@ Merchant app (needs a dev build, because op-sqlite and SQLCipher are native):
 cp apps/merchant/.env.example apps/merchant/.env   # set EXPO_PUBLIC_MERCHANT_ADDRESS
 pnpm --filter @ghostrail/merchant android          # or ios
 ```
+
+The app has two modes:
+
+- **Merchant:** create a request QR, scan the signed payment, settle.
+- **Payer:** a built-in test wallet. Scan a request QR, review it, sign offline, and show the signed QR. It displays the cached balance as "last known balance, synced … ago".
+
+Until the device has synced its clock with Horizon at least once, both creating requests and signing are blocked with a "Connect once to sync" message.
 
 ## Stellar decisions, one line each
 
