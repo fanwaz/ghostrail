@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "GhostRail Merchant",
+    "slug": "ghostrail-merchant",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "plugins": ["expo-secure-store"],
+    "ios": { "bundleIdentifier": "org.ghostrail.merchant" },
+    "android": { "package": "org.ghostrail.merchant" }
+  }
+}
