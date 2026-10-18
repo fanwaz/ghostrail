@@ -1,3 +1,4 @@
+import type { Keypair, Transaction } from "@stellar/stellar-sdk";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import {
   GhostRailError,
@@ -7,11 +8,17 @@ import {
   type RelayResponse,
   type Submitter,
 } from "@ghostrail/core";
+import { wrapInFeeBump } from "./fee-bump.js";
 import { validateForRelay } from "./validate.js";
 
 export interface RelayerDeps {
   submitter: Submitter;
   confirmer: Confirmer;
+  /** Testnet account that pays fees for every relayed tx via fee-bump. */
+  sponsor: Keypair;
+  /** Per-op fee for the fee-bump wrapper, in stroops. */
+  feeBumpBaseFee?: number;
+  /** Pass a NetworkClock's `now` in production so expiry checks use network time. */
   clock?: Clock;
 }
 
@@ -22,12 +29,11 @@ const HASH_PATTERN = "^[0-9a-f]{64}$";
  * hash is the idempotency key, and Horizon is the source of truth.
  *
  * Routes:
- *   POST /v1/transactions        { xdr }  → RelayResponse (never claims settlement)
- *   GET  /v1/transactions/:hash           → Horizon confirmation for the hash
+ *   POST /submit        { xdr }  → RelayResponse; wraps the tx in a sponsored fee-bump (never claims settlement)
+ *   GET  /status/:hash           → Horizon confirmation for the customer's (inner) tx hash
  *   GET  /health
  *
  * TODO(rate-limit): register @fastify/rate-limit per merchant key.
- * TODO(fee-bump): optionally wrap envelopes in a sponsored fee bump.
  */
 export function buildApp(deps: RelayerDeps, options: FastifyServerOptions = {}): FastifyInstance {
   const clock = deps.clock ?? systemClock;
@@ -37,7 +43,7 @@ export function buildApp(deps: RelayerDeps, options: FastifyServerOptions = {}):
   app.get("/health", async () => ({ ok: true }));
 
   app.post<{ Body: { xdr: string } }>(
-    "/v1/transactions",
+    "/submit",
     {
       schema: {
         body: {
@@ -50,8 +56,9 @@ export function buildApp(deps: RelayerDeps, options: FastifyServerOptions = {}):
     },
     async (request, reply) => {
       let hash: string;
+      let tx: Transaction;
       try {
-        hash = validateForRelay(request.body.xdr, clock);
+        ({ hash, tx } = validateForRelay(request.body.xdr, clock));
       } catch (err) {
         if (!(err instanceof GhostRailError)) throw err;
         return reply.code(400).send({ hash: "", status: "rejected", code: err.code, retryable: false, error: err.message });
@@ -60,7 +67,7 @@ export function buildApp(deps: RelayerDeps, options: FastifyServerOptions = {}):
       // Concurrent posts of the same envelope share one submit.
       let pending = inFlight.get(hash);
       if (!pending) {
-        pending = relay(deps, hash, request.body.xdr).finally(() => inFlight.delete(hash));
+        pending = relay(deps, hash, tx).finally(() => inFlight.delete(hash));
         inFlight.set(hash, pending);
       }
       const { code, body } = await pending;
@@ -69,7 +76,7 @@ export function buildApp(deps: RelayerDeps, options: FastifyServerOptions = {}):
   );
 
   app.get<{ Params: { hash: string } }>(
-    "/v1/transactions/:hash",
+    "/status/:hash",
     { schema: { params: { type: "object", properties: { hash: { type: "string", pattern: HASH_PATTERN } } } } },
     async (request, reply) => {
       try {
@@ -84,7 +91,7 @@ export function buildApp(deps: RelayerDeps, options: FastifyServerOptions = {}):
   return app;
 }
 
-async function relay(deps: RelayerDeps, hash: string, xdr: string): Promise<{ code: number; body: RelayResponse }> {
+async function relay(deps: RelayerDeps, hash: string, inner: Transaction): Promise<{ code: number; body: RelayResponse }> {
   // Idempotency: if Horizon already has this hash, don't submit again.
   try {
     const existing = await deps.confirmer.confirm(hash);
@@ -93,14 +100,16 @@ async function relay(deps: RelayerDeps, hash: string, xdr: string): Promise<{ co
     // Lookup failure is not fatal; submitting the same envelope twice is harmless.
   }
 
-  const outcome = await deps.submitter.submit(xdr);
+  const bump = wrapInFeeBump(inner, deps.sponsor, deps.feeBumpBaseFee);
+  const outcome = await deps.submitter.submit(bump.xdr);
+  const feeBumpHash = bump.hash;
   switch (outcome.kind) {
     case "accepted":
       // 202, not 200: acceptance is not settlement; clients confirm by hash.
-      return { code: 202, body: { hash, status: "accepted" } };
+      return { code: 202, body: { hash, feeBumpHash, status: "accepted" } };
     case "rejected":
-      return { code: 400, body: { hash, status: "rejected", code: outcome.code, retryable: outcome.retryable } };
+      return { code: 400, body: { hash, feeBumpHash, status: "rejected", code: outcome.code, retryable: outcome.retryable } };
     case "unknown":
-      return { code: 502, body: { hash, status: "unknown", error: outcome.error } };
+      return { code: 502, body: { hash, feeBumpHash, status: "unknown", error: outcome.error } };
   }
 }

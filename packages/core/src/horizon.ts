@@ -39,9 +39,12 @@ const RETRYABLE_CODES = new Set(["tx_bad_seq", "tx_insufficient_fee", "tx_too_ea
 
 /** Maps an error thrown by `submitTransaction` to a {@link SubmitOutcome}. */
 export function classifySubmitError(hash: string, err: unknown): SubmitOutcome {
-  const response = (err as { response?: { status?: number; data?: { extras?: { result_codes?: { transaction?: string } } } } })
+  type ResultCodes = { transaction?: string; inner_transaction?: string };
+  const response = (err as { response?: { status?: number; data?: { extras?: { result_codes?: ResultCodes } } } })
     ?.response;
-  const code = response?.data?.extras?.result_codes?.transaction;
+  const codes = response?.data?.extras?.result_codes;
+  // Stellar: a fee-bump wrapper reports tx_fee_bump_inner_failed; the inner code is what matters for retry.
+  const code = codes?.transaction === "tx_fee_bump_inner_failed" ? (codes.inner_transaction ?? codes.transaction) : codes?.transaction;
   if (response?.status === 400 && code) {
     return { kind: "rejected", hash, code, retryable: RETRYABLE_CODES.has(code) };
   }
@@ -74,7 +77,10 @@ export class HorizonGateway implements Submitter, Confirmer {
   async confirm(hash: string): Promise<Confirmation> {
     try {
       const tx = await this.server.transactions().transaction(hash).call();
-      if (tx.hash !== hash) throw new Error(`Horizon returned ${tx.hash} for ${hash}`);
+      // Stellar: Horizon also finds a fee-bump tx by its inner hash, so either may match.
+      if (tx.hash !== hash && tx.inner_transaction?.hash !== hash) {
+        throw new Error(`Horizon returned ${tx.hash} for ${hash}`);
+      }
       // Stellar: failed txs are also included in ledgers (fee charged), hence `successful`.
       return { found: true, hash, successful: tx.successful, ledger: tx.ledger_attr };
     } catch (err) {
@@ -82,4 +88,17 @@ export class HorizonGateway implements Submitter, Confirmer {
       throw err;
     }
   }
+}
+
+/**
+ * Close time (unix seconds) of the latest ledger: the network's notion of "now".
+ * Feed it to `NetworkClock.sync`.
+ */
+export async function fetchLatestLedgerCloseTime(
+  server: Pick<Horizon.Server, "ledgers"> = new Horizon.Server(HORIZON_URL),
+): Promise<number> {
+  const page = await server.ledgers().order("desc").limit(1).call();
+  const closedAt = page.records[0]?.closed_at;
+  if (!closedAt) throw new Error("Horizon returned no ledgers");
+  return Math.floor(Date.parse(closedAt) / 1000);
 }

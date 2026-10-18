@@ -14,7 +14,7 @@ describe("RelayerSubmitter", () => {
   it("posts the envelope to the relayer", async () => {
     const { impl, calls } = fakeFetch(202, { hash: "ab", status: "accepted" });
     expect(await new RelayerSubmitter("http://relay.test", impl).submit("XDR")).toEqual({ kind: "accepted", hash: "ab" });
-    expect(calls[0]?.url).toBe("http://relay.test/v1/transactions");
+    expect(calls[0]?.url).toBe("http://relay.test/submit");
     expect(calls[0]?.init?.body).toBe(JSON.stringify({ xdr: "XDR" }));
   });
 

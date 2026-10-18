@@ -18,7 +18,7 @@ These rules hold everywhere in the codebase. PRs that weaken them will not be me
 
 ```
 packages/core     @ghostrail/core: signing, verification, queue state machine, stores, settlement
-apps/relayer      Fastify relayer: validates and forwards envelopes to Horizon (stateless)
+apps/relayer      Fastify relayer: POST /submit (sponsored fee-bump), GET /status/:hash
 apps/merchant     Expo / React Native merchant app: op-sqlite + SQLCipher queue
 docs/             architecture notes
 ```
@@ -28,13 +28,17 @@ docs/             architecture notes
 ```
 merchant                     customer (offline)               network (later)
 ────────                     ──────────────────               ───────────────
+                             wallet.sync()  (while online: sequence,
+                                             balance, clock offset)
 encodeRequest(req) ──QR──►   decodeRequest
-                             signPayment(req, key, cachedSeq)
-verifyPayment(xdr, req) ◄─QR─ signed XDR
+                             wallet.pay(req) → buildOfflinePayment
+                               (persists sequence + 1 first)
+verifySignedPayment ◄──QR─── signed XDR
+  (scan with the camera)
 queue.enqueue  (queued)
                                                               settler.runOnce():
                                                                 beginSubmit  (persist: submitting)
-                                                                submit       (Horizon or relayer)
+                                                                submit       (Horizon, or relayer + fee-bump)
                                                                 confirm(hash) on Horizon
                                                                 → settled | failed | queued | submitted | expired
 ```
@@ -46,14 +50,14 @@ Requires Node ≥ 22.5 (for the built-in `node:sqlite` used in tests) and pnpm 1
 ```sh
 pnpm install
 pnpm test            # builds core, runs every package's tests (no network)
-pnpm test:testnet    # also runs a real offline → settle round trip on testnet (uses Friendbot)
+pnpm test:testnet    # also runs real round trips on testnet, direct and via the relayer (uses Friendbot)
 pnpm typecheck
 ```
 
 Relayer:
 
 ```sh
-pnpm --filter @ghostrail/relayer dev    # http://localhost:8787
+pnpm --filter @ghostrail/relayer dev    # http://localhost:8787 (set RELAYER_SPONSOR_SECRET to reuse a sponsor)
 ```
 
 Merchant app (needs a dev build, because op-sqlite and SQLCipher are native):
@@ -65,6 +69,9 @@ pnpm --filter @ghostrail/merchant android          # or ios
 
 ## Stellar decisions, one line each
 
+- **Network clock:** validators compare `maxTime` with ledger close time, so expiry uses device time plus an offset measured from the latest ledger.
+- **Sponsored fee-bump on relay:** the relayer pays fees without touching the customer's signature; the inner hash stays the idempotency key.
+- **Spendable balance:** cached as balance − liabilities − (2 + subentries + sponsoring − sponsored) × 0.5 XLM reserve.
 - **Fixed fee (1000 stroops/op):** an offline signer can't fetch fee stats, so it pays 10× base to survive surge pricing.
 - **Cached sequence number:** a tx must carry the account's next sequence, so wallets sign against the last value they saw online.
 - **Explicit `timebounds.maxTime`:** validators reject the tx after expiry even if someone replays it; `maxTime = 0` (never expires) is refused.

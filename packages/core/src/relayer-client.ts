@@ -1,8 +1,11 @@
 import type { SubmitOutcome, Submitter } from "./horizon.js";
 
-/** Body returned by the relayer's POST /v1/transactions. */
+/** Body returned by the relayer's POST /submit. */
 export interface RelayResponse {
+  /** The customer's (inner) tx hash: the idempotency key. */
   hash: string;
+  /** Hash of the relayer's fee-bump wrapper, for debugging only. */
+  feeBumpHash?: string;
   /** "confirmed" means the relayer already saw the hash on Horizon; it is still re-checked by the caller. */
   status: "accepted" | "rejected" | "unknown" | "confirmed";
   code?: string;
@@ -26,7 +29,7 @@ export class RelayerSubmitter implements Submitter {
   async submit(xdr: string): Promise<SubmitOutcome> {
     let body: RelayResponse;
     try {
-      const response = await this.fetchImpl(new URL("/v1/transactions", this.baseUrl), {
+      const response = await this.fetchImpl(new URL("/submit", this.baseUrl), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ xdr }),

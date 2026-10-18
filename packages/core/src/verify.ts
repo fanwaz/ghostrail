@@ -34,7 +34,7 @@ export interface VerifiedPayment {
  * TODO(risk): plug an optional online pre-check (balance/sequence) here when
  * connectivity is available at acceptance time.
  */
-export function verifyPayment(xdr: string, request: PaymentRequest, clock: Clock = systemClock): VerifiedPayment {
+export function verifySignedPayment(xdr: string, request: PaymentRequest, clock: Clock = systemClock): VerifiedPayment {
   const tx = parseTransaction(xdr);
   const fail = (code: "MISMATCH" | "INVALID_TRANSACTION", why: string): never => {
     throw new GhostRailError(code, why);

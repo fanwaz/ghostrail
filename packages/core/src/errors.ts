@@ -10,7 +10,9 @@ export type GhostRailErrorCode =
   | "DUPLICATE"
   | "INVALID_TRANSITION"
   | "STALE_STATE"
-  | "NOT_FOUND";
+  | "NOT_FOUND"
+  | "NOT_SYNCED"
+  | "INSUFFICIENT_BALANCE";
 
 export class GhostRailError extends Error {
   constructor(

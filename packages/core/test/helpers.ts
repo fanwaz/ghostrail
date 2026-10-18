@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
 import { toHex } from "../src/bytes.js";
 import type { Confirmation, Confirmer, PaymentRequest, SqlDriver, SubmitOutcome, Submitter } from "../src/index.js";
-import { NETWORK_PASSPHRASE, signPayment, verifyPayment } from "../src/index.js";
+import { NETWORK_PASSPHRASE, buildOfflinePayment, verifySignedPayment } from "../src/index.js";
 
 export const NOW = 1_800_000_000;
 
@@ -36,13 +36,13 @@ let nextSequence = 100n;
 /** Signs a fresh payment from `customer` and verifies it, like a merchant would. */
 export function makeVerified(overrides: Partial<PaymentRequest> = {}, sequence = nextSequence++) {
   const request = makeRequest(overrides);
-  const signed = signPayment({
+  const signed = buildOfflinePayment({
     request,
     signer: customer,
     account: { publicKey: customer.publicKey(), sequence: String(sequence) },
     clock: () => NOW,
   });
-  return verifyPayment(signed.xdr, request, () => NOW);
+  return verifySignedPayment(signed.xdr, request, () => NOW);
 }
 
 type NetworkEvent = { type: "submit" | "confirm"; hash: string };

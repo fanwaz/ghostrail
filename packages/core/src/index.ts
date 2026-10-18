@@ -5,6 +5,7 @@ export * from "./clock.js";
 export * from "./errors.js";
 export * from "./horizon.js";
 export * from "./network.js";
+export * from "./payer.js";
 export * from "./queue.js";
 export * from "./relayer-client.js";
 export * from "./request.js";

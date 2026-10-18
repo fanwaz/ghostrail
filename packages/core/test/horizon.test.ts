@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import { HorizonGateway, classifySubmitError, type HorizonServerLike } from "../src/index.js";
 import { makeVerified } from "./helpers.js";
 
-const horizonError = (status: number, code?: string) =>
+const horizonError = (status: number, code?: string, inner?: string) =>
   Object.assign(new Error("Request failed"), {
-    response: { status, data: code ? { extras: { result_codes: { transaction: code } } } : {} },
+    response: {
+      status,
+      data: code ? { extras: { result_codes: { transaction: code, ...(inner ? { inner_transaction: inner } : {}) } } } : {},
+    },
   });
 
 describe("classifySubmitError", () => {
@@ -21,6 +24,19 @@ describe("classifySubmitError", () => {
   it("classifies permanent tx codes", () => {
     expect(classifySubmitError("h", horizonError(400, "tx_bad_auth"))).toMatchObject({ retryable: false });
     expect(classifySubmitError("h", horizonError(400, "tx_too_late"))).toMatchObject({ retryable: false });
+  });
+
+  it("uses the inner code when a fee-bump wrapper fails", () => {
+    expect(classifySubmitError("h", horizonError(400, "tx_fee_bump_inner_failed", "tx_bad_seq"))).toEqual({
+      kind: "rejected",
+      hash: "h",
+      code: "tx_bad_seq",
+      retryable: true,
+    });
+    expect(classifySubmitError("h", horizonError(400, "tx_fee_bump_inner_failed"))).toMatchObject({
+      code: "tx_fee_bump_inner_failed",
+      retryable: false,
+    });
   });
 
   it("treats timeouts, 5xx and transport errors as unknown", () => {
@@ -67,6 +83,13 @@ describe("HorizonGateway", () => {
     const { server, calls } = fakeServer({ lookup: async (hash) => ({ hash, successful: true, ledger_attr: 123 }) });
     expect(await new HorizonGateway(server).confirm("ab")).toEqual({ found: true, hash: "ab", successful: true, ledger: 123 });
     expect(calls).toEqual(["lookup:ab"]);
+  });
+
+  it("confirms a fee-bumped tx looked up by its inner hash", async () => {
+    const { server } = fakeServer({
+      lookup: async () => ({ hash: "outer", inner_transaction: { hash: "ab" }, successful: true, ledger_attr: 5 }),
+    });
+    expect(await new HorizonGateway(server).confirm("ab")).toEqual({ found: true, hash: "ab", successful: true, ledger: 5 });
   });
 
   it("maps 404 to not found", async () => {

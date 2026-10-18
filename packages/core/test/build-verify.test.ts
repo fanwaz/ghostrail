@@ -1,6 +1,6 @@
 import { Account, Keypair, Memo, Networks, Operation, TransactionBuilder, Asset } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
-import { GhostRailError, NETWORK_PASSPHRASE, signPayment, verifyPayment } from "../src/index.js";
+import { GhostRailError, NETWORK_PASSPHRASE, buildOfflinePayment, verifySignedPayment } from "../src/index.js";
 import { NOW, customer, makeRequest, merchant } from "./helpers.js";
 
 const account = () => ({ publicKey: customer.publicKey(), sequence: "100" });
@@ -50,10 +50,10 @@ function expectCode(fn: () => unknown, code: GhostRailError["code"]) {
   throw new Error(`expected ${code}`);
 }
 
-describe("signPayment", () => {
+describe("buildOfflinePayment", () => {
   it("produces a testnet tx bound to the request and advances the sequence", () => {
     const request = makeRequest();
-    const signed = signPayment({ request, signer: customer, account: account(), clock });
+    const signed = buildOfflinePayment({ request, signer: customer, account: account(), clock });
     const tx = TransactionBuilder.fromXDR(signed.xdr, NETWORK_PASSPHRASE);
     if (!("sequence" in tx)) throw new Error("expected a plain transaction");
 
@@ -65,28 +65,28 @@ describe("signPayment", () => {
   });
 
   it("is deterministic: same inputs give the same hash (the idempotency key)", () => {
-    const a = signPayment({ request: makeRequest(), signer: customer, account: account(), clock });
-    const b = signPayment({ request: makeRequest(), signer: customer, account: account(), clock });
+    const a = buildOfflinePayment({ request: makeRequest(), signer: customer, account: account(), clock });
+    const b = buildOfflinePayment({ request: makeRequest(), signer: customer, account: account(), clock });
     expect(a.hash).toBe(b.hash);
   });
 
   it("refuses to sign an expired request", () => {
-    expectCode(() => signPayment({ request: makeRequest({ expiresAt: NOW }), signer: customer, account: account(), clock }), "EXPIRED");
+    expectCode(() => buildOfflinePayment({ request: makeRequest({ expiresAt: NOW }), signer: customer, account: account(), clock }), "EXPIRED");
   });
 
   it("refuses a signer that is not the paying account", () => {
     expectCode(
-      () => signPayment({ request: makeRequest(), signer: Keypair.random(), account: account(), clock }),
+      () => buildOfflinePayment({ request: makeRequest(), signer: Keypair.random(), account: account(), clock }),
       "BAD_SIGNATURE",
     );
   });
 });
 
-describe("verifyPayment", () => {
-  it("accepts a payment signed by signPayment", () => {
+describe("verifySignedPayment", () => {
+  it("accepts a payment signed by buildOfflinePayment", () => {
     const request = makeRequest();
-    const signed = signPayment({ request, signer: customer, account: account(), clock });
-    const verified = verifyPayment(signed.xdr, request, clock);
+    const signed = buildOfflinePayment({ request, signer: customer, account: account(), clock });
+    const verified = verifySignedPayment(signed.xdr, request, clock);
     expect(verified).toMatchObject({
       hash: signed.hash,
       requestId: request.id,
@@ -99,48 +99,48 @@ describe("verifyPayment", () => {
   });
 
   it("accepts equal amounts in different notation", () => {
-    expect(() => verifyPayment(craft({ amount: "12.5000000" }), makeRequest(), clock)).not.toThrow();
+    expect(() => verifySignedPayment(craft({ amount: "12.5000000" }), makeRequest(), clock)).not.toThrow();
   });
 
-  it("rejects garbage", () => expectCode(() => verifyPayment("AAAA", makeRequest(), clock), "INVALID_TRANSACTION"));
+  it("rejects garbage", () => expectCode(() => verifySignedPayment("AAAA", makeRequest(), clock), "INVALID_TRANSACTION"));
 
   it("rejects a tx signed for another network", () => {
-    expectCode(() => verifyPayment(craft({ passphrase: Networks.PUBLIC }), makeRequest(), clock), "BAD_SIGNATURE");
+    expectCode(() => verifySignedPayment(craft({ passphrase: Networks.PUBLIC }), makeRequest(), clock), "BAD_SIGNATURE");
   });
 
   it("rejects a signature from someone else", () => {
-    expectCode(() => verifyPayment(craft({ signer: Keypair.random() }), makeRequest(), clock), "BAD_SIGNATURE");
+    expectCode(() => verifySignedPayment(craft({ signer: Keypair.random() }), makeRequest(), clock), "BAD_SIGNATURE");
   });
 
-  it("rejects a wrong amount", () => expectCode(() => verifyPayment(craft({ amount: "1" }), makeRequest(), clock), "MISMATCH"));
+  it("rejects a wrong amount", () => expectCode(() => verifySignedPayment(craft({ amount: "1" }), makeRequest(), clock), "MISMATCH"));
 
   it("rejects a wrong destination", () => {
-    expectCode(() => verifyPayment(craft({ destination: Keypair.random().publicKey() }), makeRequest(), clock), "MISMATCH");
+    expectCode(() => verifySignedPayment(craft({ destination: Keypair.random().publicKey() }), makeRequest(), clock), "MISMATCH");
   });
 
   it("rejects a wrong memo", () => {
-    expectCode(() => verifyPayment(craft({ memo: Memo.text("other") }), makeRequest(), clock), "MISMATCH");
-    expectCode(() => verifyPayment(craft({ memo: Memo.none() }), makeRequest(), clock), "MISMATCH");
+    expectCode(() => verifySignedPayment(craft({ memo: Memo.text("other") }), makeRequest(), clock), "MISMATCH");
+    expectCode(() => verifySignedPayment(craft({ memo: Memo.none() }), makeRequest(), clock), "MISMATCH");
   });
 
   it("rejects a tx without maxTime", () => {
-    expectCode(() => verifyPayment(craft({ maxTime: 0 }), makeRequest(), clock), "MISSING_TIME_BOUNDS");
+    expectCode(() => verifySignedPayment(craft({ maxTime: 0 }), makeRequest(), clock), "MISSING_TIME_BOUNDS");
   });
 
   it("rejects a tx that outlives the request", () => {
-    expectCode(() => verifyPayment(craft({ maxTime: NOW + 10_000 }), makeRequest(), clock), "MISMATCH");
+    expectCode(() => verifySignedPayment(craft({ maxTime: NOW + 10_000 }), makeRequest(), clock), "MISMATCH");
   });
 
   it("rejects an already-expired tx (local check)", () => {
-    expectCode(() => verifyPayment(craft(), makeRequest(), () => NOW + 600), "EXPIRED");
+    expectCode(() => verifySignedPayment(craft(), makeRequest(), () => NOW + 600), "EXPIRED");
   });
 
   it("rejects extra operations", () => {
-    expectCode(() => verifyPayment(craft({ extraOp: true }), makeRequest(), clock), "INVALID_TRANSACTION");
+    expectCode(() => verifySignedPayment(craft({ extraOp: true }), makeRequest(), clock), "INVALID_TRANSACTION");
   });
 
   it("rejects an operation paid from a different account", () => {
-    expectCode(() => verifyPayment(craft({ opSource: Keypair.random().publicKey() }), makeRequest(), clock), "INVALID_TRANSACTION");
+    expectCode(() => verifySignedPayment(craft({ opSource: Keypair.random().publicKey() }), makeRequest(), clock), "INVALID_TRANSACTION");
   });
 
   it("rejects fee-bump envelopes", () => {
@@ -149,6 +149,6 @@ describe("verifyPayment", () => {
     const sponsor = Keypair.random();
     const bump = TransactionBuilder.buildFeeBumpTransaction(sponsor, "2000", inner, NETWORK_PASSPHRASE);
     bump.sign(sponsor);
-    expectCode(() => verifyPayment(bump.toEnvelope().toXDR("base64"), makeRequest(), clock), "INVALID_TRANSACTION");
+    expectCode(() => verifySignedPayment(bump.toEnvelope().toXDR("base64"), makeRequest(), clock), "INVALID_TRANSACTION");
   });
 });

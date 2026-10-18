@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, FlatList, SafeAreaView, StyleSheet, Text, TextInput, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import QRCode from "react-native-qrcode-svg";
 import {
   encodeRequest,
-  systemClock,
-  verifyPayment,
+  verifySignedPayment,
   type PaymentRecord,
   type PaymentRequest,
 } from "@ghostrail/core";
 import { MERCHANT_ADDRESS, REQUEST_TTL_SECONDS } from "./src/config";
 import { createMerchant, type Merchant } from "./src/merchant";
+import { classifyScan } from "./src/scan";
+import { Scanner } from "./src/Scanner";
 
 /**
- * Minimal merchant screen: create a request, accept a signed payment, settle.
+ * Minimal merchant screen: show a request QR, scan (or paste) the signed payment, settle.
+ * All times come from the merchant's network-synced clock.
  *
- * TODO(qr): render `encoded` as a QR code and scan the customer's signed XDR (expo-camera).
  * TODO(nav): split into screens once there is more than one flow.
  */
 export default function App() {
@@ -23,6 +25,7 @@ export default function App() {
   const [amount, setAmount] = useState("");
   const [request, setRequest] = useState<PaymentRequest | null>(null);
   const [signedXdr, setSignedXdr] = useState("");
+  const [scanning, setScanning] = useState(false);
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async (m: Merchant) => setPayments(await m.queue.list()), []);
@@ -39,6 +42,7 @@ export default function App() {
   }, [refresh]);
 
   const createRequest = () => {
+    if (!merchant) return;
     try {
       const next: PaymentRequest = {
         v: 1,
@@ -46,7 +50,7 @@ export default function App() {
         destination: MERCHANT_ADDRESS,
         amount,
         asset: "native",
-        expiresAt: systemClock() + REQUEST_TTL_SECONDS,
+        expiresAt: merchant.clock.now() + REQUEST_TTL_SECONDS,
       };
       encodeRequest(next); // validates
       setRequest(next);
@@ -56,10 +60,10 @@ export default function App() {
     }
   };
 
-  const accept = async () => {
+  const accept = async (xdr: string) => {
     if (!merchant || !request) return;
     try {
-      const { duplicate } = await merchant.queue.enqueue(verifyPayment(signedXdr.trim(), request));
+      const { duplicate } = await merchant.queue.enqueue(verifySignedPayment(xdr.trim(), request, merchant.clock.now));
       setMessage(duplicate ? "Already received" : "Queued — settles when online");
       setSignedXdr("");
       setRequest(null);
@@ -68,9 +72,16 @@ export default function App() {
     }
   };
 
+  const onScan = (data: string) => {
+    setScanning(false);
+    const scan = classifyScan(data);
+    if (scan.kind === "payment") void accept(scan.xdr);
+    else setMessage(scan.kind === "request" ? "That is a payment request, not a signed payment" : "Not a GhostRail payment");
+  };
+
   const settle = async () => {
     if (!merchant) return;
-    const report = await merchant.settler.runOnce();
+    const report = await merchant.settle();
     setMessage(
       `settled ${report.settled.length}, failed ${report.failed.length}, expired ${report.expired.length}, ` +
         `pending ${report.pending.length}${report.errors.length ? `, errors ${report.errors.length}` : ""}`,
@@ -84,16 +95,19 @@ export default function App() {
 
       <View style={styles.row}>
         <TextInput style={styles.input} placeholder="Amount (XLM)" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
-        <Button title="Request" onPress={createRequest} />
+        <Button title="Request" onPress={createRequest} disabled={!merchant} />
       </View>
 
-      {request && (
-        <View>
-          <Text selectable style={styles.mono}>{encodeRequest(request)}</Text>
-          <TextInput style={styles.input} placeholder="Paste signed transaction XDR" value={signedXdr} onChangeText={setSignedXdr} multiline />
-          <Button title="Accept payment" onPress={accept} />
+      {request && !scanning && (
+        <View style={styles.request}>
+          <QRCode value={encodeRequest(request)} size={220} />
+          <Button title="Scan signed payment" onPress={() => setScanning(true)} />
+          {/* Fallback for emulators and testing without a second device. */}
+          <TextInput style={styles.input} placeholder="…or paste signed transaction XDR" value={signedXdr} onChangeText={setSignedXdr} multiline />
+          <Button title="Accept pasted payment" onPress={() => accept(signedXdr)} />
         </View>
       )}
+      {request && scanning && <Scanner onScan={onScan} onCancel={() => setScanning(false)} />}
 
       <Button title="Settle now" onPress={settle} disabled={!merchant} />
       {message ? <Text style={styles.message}>{message}</Text> : null}
@@ -119,5 +133,6 @@ const styles = StyleSheet.create({
   input: { flex: 1, borderWidth: 1, borderColor: "#999", borderRadius: 6, padding: 8 },
   mono: { fontFamily: "monospace", fontSize: 12 },
   message: { color: "#555" },
+  request: { gap: 8, alignItems: "center" },
   payment: { paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth },
 });

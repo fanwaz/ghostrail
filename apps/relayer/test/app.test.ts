@@ -1,5 +1,5 @@
-import { Account, Keypair, Memo, Operation, Asset, TransactionBuilder } from "@stellar/stellar-sdk";
-import { NETWORK_PASSPHRASE, signPayment, toHex, type Confirmation, type Confirmer, type SubmitOutcome, type Submitter } from "@ghostrail/core";
+import { Account, Asset, FeeBumpTransaction, Keypair, Memo, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
+import { NETWORK_PASSPHRASE, buildOfflinePayment, toHex, type Confirmation, type Confirmer, type SubmitOutcome, type Submitter } from "@ghostrail/core";
 import { describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 
@@ -8,7 +8,7 @@ const customer = Keypair.random();
 const merchant = Keypair.random();
 
 function signed(expiresAt = NOW + 600) {
-  return signPayment({
+  return buildOfflinePayment({
     request: { v: 1, id: "order-1", destination: merchant.publicKey(), amount: "5", asset: "native", expiresAt },
     signer: customer,
     account: { publicKey: customer.publicKey(), sequence: "10" },
@@ -18,12 +18,14 @@ function signed(expiresAt = NOW + 600) {
 
 class FakeNetwork implements Submitter, Confirmer {
   submits = 0;
+  submitted: string[] = [];
   known = new Map<string, Confirmation & { found: true }>();
   outcome: (hash: string) => SubmitOutcome = (hash) => ({ kind: "accepted", hash });
   confirmFails = false;
 
   async submit(xdr: string): Promise<SubmitOutcome> {
     this.submits++;
+    this.submitted.push(xdr);
     await new Promise((r) => setTimeout(r, 5));
     return this.outcome(toHex(TransactionBuilder.fromXDR(xdr, NETWORK_PASSPHRASE).hash()));
   }
@@ -34,21 +36,52 @@ class FakeNetwork implements Submitter, Confirmer {
   }
 }
 
+const sponsor = Keypair.random();
+
 function setup() {
   const network = new FakeNetwork();
-  const app = buildApp({ submitter: network, confirmer: network, clock: () => NOW });
-  const post = (xdr: unknown) => app.inject({ method: "POST", url: "/v1/transactions", payload: { xdr } });
+  const app = buildApp({ submitter: network, confirmer: network, sponsor, clock: () => NOW });
+  const post = (xdr: unknown) => app.inject({ method: "POST", url: "/submit", payload: { xdr } });
   return { network, app, post };
 }
 
-describe("POST /v1/transactions", () => {
+describe("POST /submit", () => {
   it("submits a valid envelope and answers 202 accepted (not settled)", async () => {
     const { network, post } = setup();
     const tx = signed();
     const res = await post(tx.xdr);
     expect(res.statusCode).toBe(202);
-    expect(res.json()).toEqual({ hash: tx.hash, status: "accepted" });
+    expect(res.json()).toMatchObject({ hash: tx.hash, status: "accepted" });
     expect(network.submits).toBe(1);
+  });
+
+  it("submits a sponsor-paid fee-bump wrapping the untouched customer tx", async () => {
+    const { network, post } = setup();
+    const tx = signed();
+    const res = await post(tx.xdr);
+
+    const bump = TransactionBuilder.fromXDR(network.submitted[0]!, NETWORK_PASSPHRASE);
+    expect(bump).toBeInstanceOf(FeeBumpTransaction);
+    if (!(bump instanceof FeeBumpTransaction)) return;
+    expect(bump.feeSource).toBe(sponsor.publicKey());
+    expect(toHex(bump.innerTransaction.hash())).toBe(tx.hash);
+    expect(bump.innerTransaction.toEnvelope().toXDR("base64")).toBe(
+      TransactionBuilder.fromXDR(tx.xdr, NETWORK_PASSPHRASE).toEnvelope().toXDR("base64"),
+    );
+    // 2000 stroops per op × (1 op + the fee-bump itself)
+    expect(bump.fee).toBe("4000");
+    expect(sponsor.verify(bump.hash(), bump.signatures[0]!.signature)).toBe(true);
+    // The idempotency key reported back is the inner hash; the wrapper hash is informational.
+    expect(res.json()).toEqual({ hash: tx.hash, feeBumpHash: toHex(bump.hash()), status: "accepted" });
+  });
+
+  it("produces the same fee-bump for the same envelope (deterministic wrapper)", async () => {
+    const a = setup();
+    const b = setup();
+    const tx = signed();
+    await a.post(tx.xdr);
+    await b.post(tx.xdr);
+    expect(a.network.submitted[0]).toBe(b.network.submitted[0]);
   });
 
   it("does not resubmit a hash Horizon already has", async () => {
@@ -84,7 +117,7 @@ describe("POST /v1/transactions", () => {
     network.outcome = (hash) => ({ kind: "rejected", hash, code: "tx_bad_seq", retryable: true });
     const res = await post(tx.xdr);
     expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({ hash: tx.hash, status: "rejected", code: "tx_bad_seq", retryable: true });
+    expect(res.json()).toMatchObject({ hash: tx.hash, status: "rejected", code: "tx_bad_seq", retryable: true });
   });
 
   it("reports unknown outcomes as 502", async () => {
@@ -131,29 +164,29 @@ describe("POST /v1/transactions", () => {
 
   it("validates the request body", async () => {
     const { app } = setup();
-    const res = await app.inject({ method: "POST", url: "/v1/transactions", payload: { nope: 1 } });
+    const res = await app.inject({ method: "POST", url: "/submit", payload: { nope: 1 } });
     expect(res.statusCode).toBe(400);
   });
 });
 
-describe("GET /v1/transactions/:hash", () => {
+describe("GET /status/:hash", () => {
   it("returns Horizon's view of the hash", async () => {
     const { app, network } = setup();
     const hash = "a".repeat(64);
     network.known.set(hash, { found: true, hash, successful: true, ledger: 9 });
-    const res = await app.inject({ method: "GET", url: `/v1/transactions/${hash}` });
+    const res = await app.inject({ method: "GET", url: `/status/${hash}` });
     expect(res.json()).toEqual({ found: true, hash, successful: true, ledger: 9 });
   });
 
   it("returns 502 when Horizon is unreachable", async () => {
     const { app, network } = setup();
     network.confirmFails = true;
-    expect((await app.inject({ method: "GET", url: `/v1/transactions/${"a".repeat(64)}` })).statusCode).toBe(502);
+    expect((await app.inject({ method: "GET", url: `/status/${"a".repeat(64)}` })).statusCode).toBe(502);
   });
 
   it("rejects malformed hashes", async () => {
     const { app } = setup();
-    expect((await app.inject({ method: "GET", url: "/v1/transactions/xyz" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/status/xyz" })).statusCode).toBe(400);
   });
 });
 

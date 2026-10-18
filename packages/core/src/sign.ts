@@ -29,11 +29,13 @@ export interface SignedPayment {
 /**
  * Builds and signs a payment for `request` without any network access.
  *
+ * Prefer {@link PayerWallet.pay}, which caches and advances the sequence for you.
+ *
  * TODO(multisig): accounts with thresholds > 1 need additional signers here.
- * TODO(sequence-gaps): two offline payments signed from the same cached sequence
- * conflict; a wallet should serialize signing or use channel accounts.
+ * TODO(sequence-gaps): PayerWallet serializes signing on one device, but the same
+ * account used on two devices still conflicts; channel accounts would fix that.
  */
-export function signPayment(params: {
+export function buildOfflinePayment(params: {
   request: PaymentRequest;
   signer: Keypair;
   account: OfflineAccount;

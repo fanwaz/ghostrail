@@ -5,8 +5,20 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "plugins": ["expo-secure-store"],
-    "ios": { "bundleIdentifier": "org.ghostrail.merchant" },
-    "android": { "package": "org.ghostrail.merchant" }
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan customers' signed GhostRail payments."
+        }
+      ]
+    ],
+    "ios": {
+      "bundleIdentifier": "org.ghostrail.merchant"
+    },
+    "android": {
+      "package": "org.ghostrail.merchant"
+    }
   }
 }

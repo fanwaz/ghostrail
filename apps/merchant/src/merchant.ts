@@ -3,25 +3,43 @@ import {
   PaymentQueue,
   RelayerSubmitter,
   Settler,
+  type NetworkClock,
+  type SettlementReport,
   type TransitionListener,
 } from "@ghostrail/core";
+import { loadClock, syncClock } from "./clock";
 import { RELAYER_URL } from "./config";
 import { openQueueStore } from "./db";
 
 export interface Merchant {
   queue: PaymentQueue;
   settler: Settler;
+  /** Network-corrected clock; use `clock.now` for request expiry and verification. */
+  clock: NetworkClock;
+  /** Re-syncs the clock (best effort), then runs a settlement pass. */
+  settle(): Promise<SettlementReport>;
 }
 
 /**
  * Wires core services for the app. Settlement is always confirmed against
  * Horizon directly, even when submitting through the relayer.
  *
- * TODO(triggers): call settler.runOnce() from a NetInfo connectivity listener.
+ * TODO(triggers): call settle() from a NetInfo connectivity listener.
  */
 export async function createMerchant(onTransition: TransitionListener): Promise<Merchant> {
-  const queue = new PaymentQueue(await openQueueStore(), { onTransition });
+  const clock = await loadClock();
+  void syncClock(clock); // best effort; the persisted offset covers offline launches
+  const queue = new PaymentQueue(await openQueueStore(), { onTransition, clock: clock.now });
   const horizon = new HorizonGateway();
   const submitter = RELAYER_URL ? new RelayerSubmitter(RELAYER_URL) : horizon;
-  return { queue, settler: new Settler({ queue, submitter, confirmer: horizon }) };
+  const settler = new Settler({ queue, submitter, confirmer: horizon, clock: clock.now });
+  return {
+    queue,
+    settler,
+    clock,
+    async settle() {
+      await syncClock(clock);
+      return settler.runOnce();
+    },
+  };
 }

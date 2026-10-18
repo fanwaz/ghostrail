@@ -9,7 +9,7 @@
   "scripts": {
     "build": "pnpm --filter ./packages/* build",
     "test": "pnpm build && pnpm -r --if-present test",
-    "test:testnet": "pnpm build && GHOSTRAIL_TESTNET=1 pnpm --filter @ghostrail/core test",
+    "test:testnet": "pnpm build && node scripts/test-testnet.mjs",
     "typecheck": "pnpm build && pnpm -r --if-present typecheck"
   }
 }

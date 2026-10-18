@@ -14,20 +14,19 @@ Search for `TODO(`:
 
 | Tag | Where | Idea |
 | --- | --- | --- |
-| `TODO(qr)` | `apps/merchant/App.tsx` | Render and scan QR codes (expo-camera) |
 | `TODO(triggers)` | `settle.ts`, `merchant.ts` | Run settlement on NetInfo reconnect and on a timer |
 | `TODO(backoff)` | `settle.ts` | Per-record exponential backoff |
-| `TODO(clock-sync)` | `clock.ts` | Clock offset from Horizon's `Date` header |
-| `TODO(sequence-gaps)` | `sign.ts` | Serialize offline signing / channel accounts |
+| `TODO(sequence-gaps)` | `sign.ts` | Channel accounts, so one payer account works on several devices |
 | `TODO(multisig)` | `sign.ts` | Additional signers |
 | `TODO(risk)` | `verify.ts` | Online balance/sequence pre-check when available |
-| `TODO(fee-bump)` | `verify.ts`, relayer `app.ts` | Relayer-sponsored fee bumps |
+| `TODO(fee-bump)` | `verify.ts` | Let merchants accept customer-supplied fee-bump envelopes |
 | `TODO(rate-limit)`, `TODO(auth)`, `TODO(policy)` | relayer, `relayer-client.ts` | Merchant API keys, rate limits, allow-lists |
 | `TODO(hooks)` | `queue.ts` | Audit log, notifications, backend sync via `onTransition` |
 | `TODO(migrations)` | `sql-store.ts` | Append schema migrations (never edit shipped ones) |
 | `TODO(nav)` | `apps/merchant/App.tsx` | Split screens |
+| `TODO(payer-app)` | `payer.ts` | Customer wallet UI: render the signed XDR as a QR code |
 
-A customer wallet app is not built yet. `signPayment` plus a cached `OfflineAccount` is all it needs from core.
+A customer wallet app is not built yet. `PayerWallet` (sync, then `pay(request)`) is all it needs from core. Give it a durable `PayerStore` (SecureStore/SQLCipher).
 
 ## Conventions
 

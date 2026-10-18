@@ -5,7 +5,7 @@ import { GhostRailError } from "./errors.js";
 
 /**
  * What a merchant shows the customer (typically as a QR code) to ask for a payment.
- * The customer's wallet turns it into a signed transaction with {@link signPayment}.
+ * The customer's wallet turns it into a signed transaction with {@link buildOfflinePayment}.
  */
 export interface PaymentRequest {
   /** Payload version; bump when the shape changes. */
