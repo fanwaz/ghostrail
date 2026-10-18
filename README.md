@@ -76,6 +76,8 @@ The app has two modes:
 
 Until the device has synced its clock with Horizon at least once, both creating requests and signing are blocked with a "Connect once to sync" message.
 
+Dev builds also have a **Self-test** mode with on-device pass/fail checks. Run it on two devices to cover QR scanning, and do so after any native or dependency change.
+
 ## Stellar decisions, one line each
 
 - **Network clock:** validators compare `maxTime` with ledger close time, so expiry uses device time plus an offset measured from the latest ledger.

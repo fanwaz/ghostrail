@@ -11,6 +11,7 @@ export * from "./relayer-client.js";
 export * from "./request.js";
 export * from "./settle.js";
 export * from "./sign.js";
+export * from "./sql-payer-store.js";
 export * from "./sql-store.js";
 export * from "./state.js";
 export * from "./store.js";

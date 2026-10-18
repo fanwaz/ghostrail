@@ -3,13 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   MemoryPayerStore,
   PayerWallet,
+  SqlPayerStore,
   spendableBalances,
   verifySignedPayment,
   type HorizonAccountLike,
   type PayerStore,
   type PayerSyncSource,
 } from "../src/index.js";
-import { NOW, makeRequest } from "./helpers.js";
+import { NOW, makeRequest, nodeSqliteDriver } from "./helpers.js";
 
 const issuer = Keypair.random().publicKey();
 
@@ -160,5 +161,90 @@ describe("PayerWallet", () => {
     const { wallet } = setup(undefined, NOW - 4 * 3600);
     await wallet.sync(source({ account: account(), networkTime: NOW }));
     await expect(wallet.pay(makeRequest({ expiresAt: NOW - 10 }))).rejects.toMatchObject({ code: "EXPIRED" });
+  });
+});
+
+describe("PayerWallet pending pruning (bounded state)", () => {
+  it("records each payment's maxTime", async () => {
+    const { wallet } = setup();
+    await wallet.sync(source({ account: account(), networkTime: NOW }));
+    await wallet.pay(makeRequest({ expiresAt: NOW + 300 }));
+    expect((await wallet.snapshot())?.pending[0]?.maxTime).toBe(NOW + 300);
+  });
+
+  it("voids debits and frees sequences once every pending payment has expired unlanded", async () => {
+    const { wallet } = setup();
+    const state = { account: account(), networkTime: NOW };
+    await wallet.sync(source(state));
+    await wallet.pay(makeRequest({ id: "a", amount: "10", expiresAt: NOW + 300 }));
+    await wallet.pay(makeRequest({ id: "b", amount: "20", expiresAt: NOW + 600 }));
+
+    state.networkTime = NOW + 600 + 61; // past both maxTimes + grace; Horizon still at sequence 100
+    const snap = await wallet.sync(source(state));
+    expect(snap.pending).toEqual([]);
+    expect(snap.sequence).toBe("100");
+    expect(snap.balances.native).toBe("1000000000"); // nothing deducted: neither payment can land
+  });
+
+  it("keeps every pending debit while any is still live (reusing a lower sequence would be unsafe)", async () => {
+    const { wallet } = setup();
+    const state = { account: account(), networkTime: NOW };
+    await wallet.sync(source(state));
+    await wallet.pay(makeRequest({ id: "a", amount: "10", expiresAt: NOW + 300 }));
+    await wallet.pay(makeRequest({ id: "b", amount: "20", expiresAt: NOW + 3600 }));
+
+    state.networkTime = NOW + 1000; // first expired, second still live
+    const snap = await wallet.sync(source(state));
+    expect(snap.pending.map((p) => p.sequence)).toEqual(["101", "102"]);
+    expect(snap.sequence).toBe("102");
+  });
+
+  it("never expires legacy entries without a maxTime", async () => {
+    const store = new MemoryPayerStore();
+    await store.save({
+      publicKey: "ignored",
+      sequence: "101",
+      balances: { native: "0" },
+      syncedAt: NOW,
+      clockOffsetSeconds: 0,
+      pending: [{ sequence: "101", asset: "native", amount: "1", fee: "1000", maxTime: null }],
+    });
+    const { wallet } = setup(store);
+    const snap = await wallet.sync(source({ account: account(), networkTime: NOW + 999_999 }));
+    expect(snap.pending.map((p) => p.sequence)).toEqual(["101"]);
+  });
+
+  it("stored state does not grow across repeated offline rounds that expire unlanded", async () => {
+    const driver = nodeSqliteDriver();
+    const { wallet } = setup(await SqlPayerStore.open(driver));
+    const size = async () =>
+      Number((await driver.execute("SELECT length(balances) + length(pending) AS n FROM payer_state")).rows[0]!.n);
+    const state = { account: account(), networkTime: NOW };
+    await wallet.sync(source(state));
+    const baseline = await size();
+
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < 5; i++) {
+        await wallet.pay(makeRequest({ id: `r${round}-${i}`, amount: "1", expiresAt: state.networkTime + 300 }));
+      }
+      expect(await size()).toBeGreaterThan(baseline); // grows while offline, by design
+      state.networkTime += 1000; // all five expire unlanded
+      await wallet.sync(source(state));
+      expect(await size()).toBe(baseline);
+    }
+  });
+
+  it("stored state does not grow when payments land", async () => {
+    const driver = nodeSqliteDriver();
+    const { wallet } = setup(await SqlPayerStore.open(driver));
+    const size = async () =>
+      Number((await driver.execute("SELECT length(pending) AS n FROM payer_state")).rows[0]!.n);
+    const state = { account: account(), networkTime: NOW };
+    await wallet.sync(source(state));
+    const baseline = await size();
+    for (let i = 0; i < 5; i++) await wallet.pay(makeRequest({ id: `l${i}`, amount: "1" }));
+    state.account = account({ sequence: "105" }); // all five landed
+    await wallet.sync(source(state));
+    expect(await size()).toBe(baseline);
   });
 });

@@ -39,7 +39,46 @@ const MIGRATIONS: readonly (readonly string[])[] = [
      )`,
     "CREATE INDEX payments_state ON payments(state)",
   ],
+  // 2: payer wallet state (see sql-payer-store.ts). One row; JSON columns keep every save a single statement.
+  [
+    `CREATE TABLE payer_state (
+       id           INTEGER PRIMARY KEY CHECK (id = 1),
+       public_key   TEXT NOT NULL,
+       sequence     TEXT NOT NULL,
+       synced_at    INTEGER NOT NULL,
+       clock_offset INTEGER NOT NULL,
+       balances     TEXT NOT NULL,
+       pending      TEXT NOT NULL
+     )`,
+  ],
 ];
+
+const migrations = new WeakMap<SqlDriver, Promise<void>>();
+
+/**
+ * Brings the database schema up to date. Every store sharing the database
+ * calls this in its `open`, so the schema is the same whichever opens first.
+ * Runs once per connection: concurrent opens share the same run instead of
+ * racing on PRAGMA user_version.
+ */
+export function migrate(db: SqlDriver): Promise<void> {
+  let run = migrations.get(db);
+  if (!run) {
+    run = runMigrations(db);
+    migrations.set(db, run);
+    run.catch(() => migrations.delete(db)); // allow a retry after failure
+  }
+  return run;
+}
+
+async function runMigrations(db: SqlDriver): Promise<void> {
+  const { rows } = await db.execute("PRAGMA user_version");
+  const version = Number(rows[0]?.user_version ?? 0);
+  for (let i = version; i < MIGRATIONS.length; i++) {
+    for (const statement of MIGRATIONS[i]!) await db.execute(statement);
+    await db.execute(`PRAGMA user_version = ${i + 1}`);
+  }
+}
 
 const COLUMNS = [
   "hash", "xdr", "request_id", "source", "destination", "amount", "asset", "sequence",
@@ -51,12 +90,7 @@ export class SqlQueueStore implements QueueStore {
 
   /** Runs pending migrations and returns a ready store. */
   static async open(db: SqlDriver): Promise<SqlQueueStore> {
-    const { rows } = await db.execute("PRAGMA user_version");
-    const version = Number(rows[0]?.user_version ?? 0);
-    for (let i = version; i < MIGRATIONS.length; i++) {
-      for (const statement of MIGRATIONS[i]!) await db.execute(statement);
-      await db.execute(`PRAGMA user_version = ${i + 1}`);
-    }
+    await migrate(db);
     return new SqlQueueStore(db);
   }
 

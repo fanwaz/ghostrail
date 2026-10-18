@@ -5,6 +5,7 @@ import { NetworkClock, systemClock, type Clock } from "./clock.js";
 import { GhostRailError } from "./errors.js";
 import { fetchLatestLedgerCloseTime } from "./horizon.js";
 import { HORIZON_URL, OFFLINE_FEE_STROOPS } from "./network.js";
+import { isPastExpiry } from "./queue.js";
 import type { PaymentRequest } from "./request.js";
 import { buildOfflinePayment, type SignedPayment } from "./sign.js";
 
@@ -16,6 +17,8 @@ export interface PendingDebit {
   amount: string;
   /** Stroops (native), as a decimal string. */
   fee: string;
+  /** The tx's maxTime (unix seconds); null for entries saved before it was recorded, which never expire locally. */
+  maxTime: number | null;
 }
 
 /** Everything the payer needs to sign offline, as of the last time it was online. */
@@ -139,8 +142,18 @@ export class PayerWallet {
 
       // Stellar: a pending tx with sequence <= the account's has either landed or can never land.
       const networkSeq = BigInt(account.sequence);
-      const pending = (previous?.pending ?? []).filter((p) => BigInt(p.sequence) > networkSeq);
-      const cachedSeq = previous ? BigInt(previous.sequence) : 0n;
+      let pending = (previous?.pending ?? []).filter((p) => BigInt(p.sequence) > networkSeq);
+      let cachedSeq = previous ? BigInt(previous.sequence) : 0n;
+
+      // Stellar: once every remaining pending tx is past its maxTime, none can ever land, so their
+      // debits are void and their sequence numbers are free to reuse. This keeps `pending` bounded
+      // by the payments still inside their expiry window. (If any is still live, all are kept:
+      // reusing a sequence below a live tx could let that tx land later, unaccounted for.)
+      const now = clock.now();
+      if (pending.length > 0 && pending.every((p) => p.maxTime !== null && isPastExpiry(p.maxTime, now))) {
+        pending = [];
+        cachedSeq = networkSeq;
+      }
 
       const balances = spendableBalances(account);
       for (const p of pending) debit(balances, p);
@@ -149,7 +162,7 @@ export class PayerWallet {
         publicKey,
         sequence: String(networkSeq > cachedSeq ? networkSeq : cachedSeq),
         balances: Object.fromEntries(Object.entries(balances).map(([k, v]) => [k, String(v)])),
-        syncedAt: clock.now(),
+        syncedAt: now,
         clockOffsetSeconds: clock.offsetSeconds,
         pending,
       };
@@ -172,6 +185,7 @@ export class PayerWallet {
         asset: request.asset,
         amount: String(toStroops(request.amount)),
         fee: String(OFFLINE_FEE_STROOPS),
+        maxTime: request.expiresAt,
       };
       const balances = Object.fromEntries(Object.entries(snapshot.balances).map(([k, v]) => [k, BigInt(v)]));
       debit(balances, { ...pendingDebit, sequence: "0" });

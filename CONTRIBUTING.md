@@ -24,7 +24,8 @@ Search for `TODO(`:
 | `TODO(hooks)` | `queue.ts` | Audit log, notifications, backend sync via `onTransition` |
 | `TODO(migrations)` | `sql-store.ts` | Append schema migrations (never edit shipped ones) |
 | `TODO(nav)` | `apps/merchant/App.tsx` | Split screens |
-| `TODO(payer-app)` | `payer.ts`, merchant `src/PayerScreen.tsx`, `src/payerWallet.ts` | Standalone customer wallet (Payer mode in the merchant app is a stand-in); move the snapshot from SecureStore to SQLCipher |
+| `TODO(payer-app)` | `payer.ts`, merchant `src/PayerScreen.tsx`, `src/payerWallet.ts` | Standalone customer wallet (Payer mode in the merchant app is a stand-in) |
+| `TODO(clock-monotonic)` | `clock.ts` | Detect wall-clock changes after sync using monotonic uptime (needs a small native module) |
 
 A standalone customer wallet app is not built yet; the merchant app's Payer mode shows the flow. `PayerWallet` (sync, then `pay(request)`) is all it needs from core. Give it a durable `PayerStore` (SecureStore/SQLCipher).
 

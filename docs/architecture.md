@@ -72,7 +72,30 @@ The merchant app uses the relayer only as a `Submitter`. Its `Confirmer` is alwa
 ## Known limitations (good first contributions)
 
 - **Sequence conflicts across devices:** `PayerWallet` serializes signing on one device, but the same account on two devices can still sign the same sequence. See `TODO(sequence-gaps)`.
-- **Clock drift after sync:** the offset is measured once per sync. A device clock that is changed or drifts while offline goes uncorrected until the next sync. (The dev machine was 4 h behind testnet, which is how the original problem showed up.)
+- **Wall-clock changes after sync:** the clock offset is measured against the device's wall clock. If the user changes that clock, or it jumps or drifts, while offline, the network clock moves with it, and nothing notices until the next sync. A payer could then sign, or a merchant accept, a payment that the network already considers expired, or one whose expiry is further away than intended. The network's time bounds still stop it from settling late, so this is a usability and correctness-of-display issue, not a settlement one. A fix is uptime-based drift detection; see `TODO(clock-monotonic)` in `clock.ts`. (The dev machine was 4 h behind testnet, which is how the original clock problem showed up.)
 - **Stale cached balance:** `PayerWallet` subtracts its own pending payments, but it can't see other spending from the same account since `syncedAt`.
 - **Single signer:** only the source account's master key is verified. See `TODO(multisig)`.
 - **No funds check on the merchant side:** the merchant can't know the payer's balance offline. See `TODO(risk)`.
+
+## Payer storage
+
+The payer's state lives in SQLite: sequence, spendable balances, sync time, clock offset, and the pending payments not yet seen on-ledger. It sits in the same SQLCipher database as the payment queue, in a single `payer_state` row (migration 2). SecureStore holds only the payer's secret key and the database key.
+
+- **One statement per save:** each save is a single upsert, so it's atomic without `BEGIN … COMMIT`. A transaction on the shared connection could pull in a concurrent queue write, or roll one back.
+- **Migrations run once per connection:** `migrate()` is shared, so the queue and payer stores can open concurrently without racing on `PRAGMA user_version`.
+- **Old installs:** the first open moves any SecureStore-held snapshot into SQLite, then deletes the old key.
+
+`pending` is bounded. An entry is dropped when Horizon's sequence passes it, because it either landed or can never land. And once every remaining entry is past its `maxTime`, all of them are void and their sequence numbers are reused.
+
+## Self-test (dev builds)
+
+The merchant app's **Self-test** mode exists only when `__DEV__` is true. It runs on-device checks for what unit tests can only mock:
+
+- expo-crypto key generation
+- Stellar sign and verify, including request encode/decode
+- SecureStore round trip
+- SQLCipher: reports `cipher_version`, survives close and reopen, and rejects a wrong key
+- QR render, by reading the SVG back as PNG
+- QR scan of a code shown by a second device
+
+Results also go to the console with a `[selftest]` prefix.

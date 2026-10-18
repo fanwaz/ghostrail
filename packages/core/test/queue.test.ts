@@ -142,7 +142,7 @@ describe("SqlQueueStore durability", () => {
       const db2 = new DatabaseSync(file);
       const queue2 = new PaymentQueue(await SqlQueueStore.open(nodeSqliteDriver(db2)));
       expect(await queue2.get(record.hash)).toMatchObject({ state: "submitting", attempts: 1, xdr: record.xdr });
-      expect(db2.prepare("PRAGMA user_version").get()).toEqual({ user_version: 1 });
+      expect(db2.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
       db2.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

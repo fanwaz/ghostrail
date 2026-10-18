@@ -18,6 +18,15 @@ export type NetworkTimeSource = () => Promise<number>;
  * device clock, which is often wrong. Sync whenever online, persist
  * `offsetSeconds`, and pass it back in on the next launch so expiry and time
  * bounds stay correct while offline.
+ *
+ * Limitation: the offset is relative to the device's wall clock, so if the
+ * user changes that clock (or it jumps) while offline, `now()` moves with it.
+ * TODO(clock-monotonic): at sync, also record a monotonic uptime reading
+ * (e.g. Android SystemClock.elapsedRealtime / iOS mach_continuous_time, via a
+ * native module). Later, compare elapsed wall time with elapsed uptime; a
+ * mismatch beyond a few seconds means the wall clock changed, so require a
+ * re-sync (or correct by the uptime delta). A reboot resets uptime, which by
+ * itself should also force a re-sync.
  */
 export class NetworkClock {
   private offset: number;

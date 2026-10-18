@@ -26,12 +26,16 @@ vi.mock("@op-engineering/op-sqlite", () => ({
   },
 }));
 
-const { openQueueStore } = await import("../src/db.js");
+// db.ts memoizes its connection, so each test gets a fresh module (a fresh "launch").
+let db: typeof import("../src/db.js");
+const openQueueStore = () => db.openQueueStore();
 
-beforeEach(() => {
+beforeEach(async () => {
   secure.clear();
   opened.length = 0;
   sqlite = new DatabaseSync(":memory:");
+  vi.resetModules();
+  db = await import("../src/db.js");
 });
 
 describe("openQueueStore", () => {
@@ -51,6 +55,16 @@ describe("openQueueStore", () => {
   it("returns a working queue store over op-sqlite", async () => {
     const store = await openQueueStore();
     expect(await store.list()).toEqual([]);
-    expect(sqlite.prepare("PRAGMA user_version").get()).toEqual({ user_version: 1 });
+    expect(sqlite.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+  });
+});
+
+describe("openDatabase", () => {
+  it("opens one shared connection for the queue and the payer", async () => {
+    const [queue, payer] = await Promise.all([db.openQueueStore(), db.openPayerStore()]);
+    await payer.save({ publicKey: "G", sequence: "1", balances: {}, syncedAt: 1, clockOffsetSeconds: 0, pending: [] });
+    expect(await queue.list()).toEqual([]);
+    expect(opened).toHaveLength(1);
+    expect(sqlite.prepare("SELECT COUNT(*) AS n FROM payer_state").get()).toEqual({ n: 1 });
   });
 });

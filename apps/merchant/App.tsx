@@ -12,6 +12,7 @@ import {
 import { createMerchant, type Merchant } from "./src/merchant";
 import { PayerScreen } from "./src/PayerScreen";
 import { createPaymentRequest } from "./src/requests";
+import { SelfTestScreen } from "./src/selftest/SelfTestScreen";
 import { classifyScan } from "./src/scan";
 import { Scanner } from "./src/Scanner";
 
@@ -28,7 +29,7 @@ export default function App() {
   const [request, setRequest] = useState<PaymentRequest | null>(null);
   const [signedXdr, setSignedXdr] = useState("");
   const [scanning, setScanning] = useState(false);
-  const [mode, setMode] = useState<"merchant" | "payer">("merchant");
+  const [mode, setMode] = useState<"merchant" | "payer" | "selftest">("merchant");
   const [clockSynced, setClockSynced] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -101,9 +102,13 @@ export default function App() {
       <View style={styles.row}>
         <Button title="Merchant" onPress={() => setMode("merchant")} disabled={mode === "merchant"} />
         <Button title="Payer" onPress={() => setMode("payer")} disabled={mode === "payer"} />
+        {/* Dev-only: __DEV__ is false in release builds, so the screen is never reachable there. */}
+        {__DEV__ && <Button title="Self-test" onPress={() => setMode("selftest")} disabled={mode === "selftest"} />}
       </View>
 
-      {mode === "payer" ? (
+      {mode === "selftest" && __DEV__ ? (
+        <SelfTestScreen />
+      ) : mode === "payer" ? (
         <PayerScreen />
       ) : (
       <>
